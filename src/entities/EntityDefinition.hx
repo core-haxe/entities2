@@ -7,4 +7,5 @@ typedef EntityDefinition = {
     var primaryKeyFieldType:EntityFieldType;
     var ?primaryKeyFieldAutoIncrement:Bool;
     var fields:Array<EntityFieldDefinition>;
+    var ?indexes:Array<Array<String>>;
 }

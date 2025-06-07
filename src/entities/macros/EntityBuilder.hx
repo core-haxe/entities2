@@ -36,7 +36,8 @@ class EntityBuilder {
             tableName: entityClass.tableName(),
             fields: [],
             primaryKeyFieldName: null,
-            primaryKeyFieldType: null
+            primaryKeyFieldType: null,
+            indexes: []
         }
         entityClass.checkForPrimaryKeys(entityDefinition);
         //var entityComplexType = entityClass.toComplexType();
@@ -65,6 +66,17 @@ class EntityBuilder {
             }
         } else {
             entityClass.substitutePrimaryKeysInQueryCalls();
+
+            var indexCandidates = entityClass.buildIndexCandidates();
+            for (key in indexCandidates.keys()) {
+                if (entityDefinition.indexes == null) {
+                    entityDefinition.indexes = [];
+                }
+                var indexColumns = indexCandidates.get(key);
+                Sys.println('entities    >   creating index for fields: ${indexColumns.join(", ")}');
+                entityDefinition.indexes.push(indexColumns);
+            }
+
             for (v in entityClass.varsAndProps) {
                 if (v.isStatic) {
                     continue;
@@ -264,6 +276,7 @@ class EntityBuilder {
             buildTableSchemaFields(entityClass, entityDefinition);
             buildInit(entityClass, entityDefinition);
             buildCheckTables(entityClass, entityDefinition);
+            buildCheckIndexes(entityClass, entityDefinition);
         }
 
         buildFieldSets(entityClass, entityDefinition);
@@ -381,6 +394,8 @@ class EntityBuilder {
                     entities.EntityManager.instance.connect().then(success -> {
                         return checkTables();
                     }).then(result -> {
+                        return checkIndexes();
+                    }).then(result -> {
                         resolve(true);
                     }, error -> {
                         reject(error);
@@ -404,6 +419,27 @@ class EntityBuilder {
                 for (joinTableSchema in JoinTableSchemas) {
                     promiseList.push(entities.EntityManager.instance.checkTableSchema.bind(joinTableSchema));
                 }
+                promises.PromiseUtils.runSequentially(promiseList).then(_ -> {
+                    resolve(true);
+                }, error -> {
+                    reject(error);
+                });
+            });
+        }
+    }
+
+    public static function buildCheckIndexes(entityClass:ClassBuilder, entityDefinition:EntityDefinition) {
+        var checkIndexesFn = entityClass.addStaticFunction("checkIndexes", macro: promises.Promise<Bool>, [APrivate]);
+        checkIndexesFn.code += macro @:privateAccess {
+            return new promises.Promise((resolve, reject) -> {
+                var promiseList = [];
+                $b{[for (columnList in entityDefinition.indexes) {
+                    macro {
+                        trace(TableSchema.name, $v{columnList});
+                        promiseList.push(entities.EntityManager.instance.createIndex.bind(TableSchema.name, $v{columnList}));
+                    }
+                }]}
+
                 promises.PromiseUtils.runSequentially(promiseList).then(_ -> {
                     resolve(true);
                 }, error -> {

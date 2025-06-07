@@ -43,6 +43,53 @@ class ClassBuilderTools {
         return null;
     }
 
+    public static function buildIndexCandidates(classBuilder:ClassBuilder):Map<String, Array<String>> {    
+        var indexMap:Map<String, Array<String>> = [];
+        for (fn in classBuilder.functions) {
+            if (!fn.metadata.contains("optimize")) {
+                continue;
+            }
+            var columnArray = [];
+            ExprTools.iter(fn.expr, findIndexCandidates.bind(columnArray));
+            if (columnArray.length > 0) {
+                for (columnNames in columnArray) {
+                    var key = columnNames.join("_");
+                    indexMap.set(key, columnNames);
+                }
+            }
+        }
+        return indexMap;
+    }
+
+    private static function findIndexCandidates(columnArray:Array<Array<String>>, e:Expr) {
+        switch(e.expr) {
+            case ECall({ expr: EField({ expr: EConst(CIdent("Query")) }, "query", Normal)}, params):
+                var columnNames = [];
+                for (p in params) {
+                    ExprTools.iter(p, extractColumnNames.bind(columnNames));
+                }
+                if (columnNames.length != 0) {
+                    columnArray.push(columnNames);
+                }
+            case _:
+                ExprTools.iter(e, findIndexCandidates.bind(columnArray));
+        }
+    }
+
+    private static function extractColumnNames(columnNames:Array<String>, e:Expr) {
+        switch (e.expr) {
+            case EConst(CIdent(s)):
+                if (s.startsWith("$")) {
+                    var columnName = s.substring(1);
+                    if (!columnNames.contains(columnName)) {
+                        columnNames.push(columnName);
+                    }
+                }
+            case _:    
+                ExprTools.iter(e, extractColumnNames.bind(columnNames));
+        }
+    }
+
     public static function substitutePrimaryKeysInQueryCalls(classBuilder:ClassBuilder) {
         for (fn in classBuilder.functions) {
             var isCandidate:Bool = false;

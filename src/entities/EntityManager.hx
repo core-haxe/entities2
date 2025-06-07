@@ -139,6 +139,18 @@ class EntityManager {
         });
     }
 
+    public function createIndex(tableName:String, indexColumns:Array<String>):Promise<Bool> {
+        return new Promise((resolve, reject) -> {
+            lookupTable(tableName).then(table -> {
+                return table.createIndex(indexColumns);
+            }).then(_ -> {
+                resolve(true);
+            }, error -> {
+                reject(error);
+            });
+        });
+    }
+
     private function updateRecord(tableName:String, query:QueryExpr, record:Record):Promise<Record> {
         return new Promise((resolve, reject) -> {
             lookupTable(tableName).then(table -> {
