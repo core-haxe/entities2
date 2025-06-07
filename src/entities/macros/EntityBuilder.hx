@@ -435,7 +435,6 @@ class EntityBuilder {
                 var promiseList = [];
                 $b{[for (columnList in entityDefinition.indexes) {
                     macro {
-                        trace(TableSchema.name, $v{columnList});
                         promiseList.push(entities.EntityManager.instance.createIndex.bind(TableSchema.name, $v{columnList}));
                     }
                 }]}
