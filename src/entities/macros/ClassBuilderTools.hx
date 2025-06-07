@@ -89,7 +89,7 @@ class ClassBuilderTools {
                 if (replacements.exists(s)) {
                     var varName = s;
                     var fieldName = replacements.get(s);
-                    return macro $i{varName}.$fieldName;
+                    return macro @:privateAccess $i{varName}.$fieldName;
                 }
                 e;
             case _:
