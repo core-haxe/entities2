@@ -530,7 +530,7 @@ class EntityBuilder {
 
                     // one to one
                     $b{[for (entityField in entityDefinition.entityFields_OneToOne()) {
-                        var classDef = entityField.toClassDefExpr();
+                        var classDef = entityField.toClassDefExpr(entityDefinition);
                         macro {
                             if (fieldSet.allow($v{entityField.name})) {
                                 var id = record.field($v{entityField.name});
@@ -557,7 +557,7 @@ class EntityBuilder {
                         }
                         var joinTableName = entityField.joinTableName();
                         var joinForeignKey = entityField.joinForeignKey();
-                        var classDef = entityField.toClassDefExpr();
+                        var classDef = entityField.toClassDefExpr(entityDefinition);
                         macro {
                             if (fieldSet.allow($v{entityField.name}) && $i{primaryKeyName} != null) {
                                 promiseList.push(() -> {
@@ -1122,7 +1122,7 @@ class EntityBuilder {
                             fieldName = entityField.primitiveEntityFieldName();
                         }
                         var foreignKey = entityField.foreignKey();
-                        var classDef = entityField.toClassDefExpr();
+                        var classDef = entityField.toClassDefExpr(entityDefinition);
                         var joinTableName = entityField.joinTableName();
                         var joinForeignKey = entityField.joinForeignKey();
                         macro {

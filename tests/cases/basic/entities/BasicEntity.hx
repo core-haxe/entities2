@@ -15,6 +15,9 @@ class BasicEntity implements IEntity {
     public var boolValue:Null<Bool>;
     public var dateValue:Date;
 
+    public var basic:SomeAbstract;
+    public var cases:String;
+
     public var entity1:BasicEntity = null;
     public var entity2:BasicEntity = null;
     @:cascade(deletions)

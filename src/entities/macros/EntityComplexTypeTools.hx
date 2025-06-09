@@ -19,18 +19,30 @@ class EntityComplexTypeTools {
         return null;
     }
 
-    public static function toClassDefExpr(field:EntityFieldDefinition):Array<String> {
+    // we'll pass in the entity def here, this means we'll create the classDef relative to the entity def package, this can
+    // remove some chances of naming collisions
+    public static function toClassDefExpr(field:EntityFieldDefinition, entityDefinition:EntityDefinition):Array<String> {
+        var classDef = null;
         switch (field.type) {
             case Entity(className, relationship, type):
                 switch (relationship) {
                     case OneToOne(table1, field1, table2, field2):
-                        return className.split(".");
+                        classDef = className.split(".");
                     case OneToMany(table1, field1, table2, field2):
-                        return className.split(".");
+                        classDef = className.split(".");
                 }
             case _:    
         }
-        return null;
+        if (entityDefinition != null) {
+            var entityClassPath = entityDefinition.className.split(".");
+            var classDefCopy = classDef.copy();
+            entityClassPath.pop();
+            classDefCopy.pop();
+            if (entityClassPath.join(".") == classDefCopy.join(".")) {
+                classDef = [classDef.pop()];
+            }
+        }
+        return classDef;
     }
 
     public static function primitiveEntityTypePath(field:EntityFieldDefinition):TypePath {
