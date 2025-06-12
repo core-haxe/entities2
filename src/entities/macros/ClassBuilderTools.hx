@@ -130,13 +130,13 @@ class ClassBuilderTools {
 
     private static function handleReplacements(e:Expr, replacements:Map<String, String>):Expr {
         return switch(e.expr) {
-            case EField({ expr: EConst(CIdent(c)) }, f, Normal):    
-                e;
+            //case EField({ expr: EConst(CIdent(c)) }, f, Normal):    
+            //    e;
             case EConst(CIdent(s)):
                 if (replacements.exists(s)) {
                     var varName = s;
                     var fieldName = replacements.get(s);
-                    return macro @:privateAccess $i{varName}.$fieldName;
+                    return macro $i{varName}.$fieldName;
                 }
                 e;
             case _:
