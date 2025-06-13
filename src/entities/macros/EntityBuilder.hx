@@ -179,7 +179,8 @@ class EntityBuilder {
                                 primitive: true,
                                 primitiveType: primitiveType
                             });
-                            entityClass.addVar("_" + fieldName + "Entities", macro: Array<$valueComplexType>, macro null, [APrivate]);
+                            var entityVar = entityClass.addVar("_" + fieldName + "Entities", macro: Array<$valueComplexType>, macro null, [APrivate]);
+                            entityVar.metadata.add(":noCompletion");
                         }
                     case (macro: Map<$keyComplexType, $valueComplexType>):
                     case (macro: $valueComplexType):
@@ -187,7 +188,8 @@ class EntityBuilder {
                             v.remove();
                             var hadExistingSetter = entityClass.hasPropSetter(v.name);
                             var entityVarName = "_" + v.name;
-                            var entityVar = entityClass.findOrCreateVar(entityVarName, v.complexType, v.access);
+                            var entityVar = entityClass.findOrCreateVar(entityVarName, v.complexType, [APrivate]);
+                            entityVar.metadata.add(":noCompletion");
                             var entityProp = entityClass.findOrCreateProperty(v.name, v.complexType, v.access, "get", "set");
                             var entityGetter = entityProp.findOrCreateGetter();
                             var entitySetter = entityProp.findOrCreateSetter();
