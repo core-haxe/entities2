@@ -46,6 +46,7 @@ class TestAll {
         runner.addCase(new cases.basic.TestFieldSets_Blacklist_Basic(db));
         runner.addCase(new cases.basic.TestLimit(db));
         runner.addCase(new cases.basic.TestPaging(db));
+        runner.addCase(new cases.basic.TestRefs(db));
     }
 
     private static function addGenericConfigCases(runner:Runner, db:IDatabase) {
