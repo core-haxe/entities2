@@ -188,7 +188,9 @@ class EntityBuilder {
                             v.remove();
                             var hadExistingSetter = entityClass.hasPropSetter(v.name);
                             var entityVarName = "_" + v.name;
+                            var entityVarExplicitNullName = "_" + v.name + "ExplicitNull";
                             var entityVar = entityClass.findOrCreateVar(entityVarName, v.complexType, [APrivate]);
+                            var entityVarExplicitNull = entityClass.findOrCreateVar(entityVarExplicitNullName, macro: Bool, macro false, [APrivate]);
                             entityVar.metadata.add(":noCompletion");
                             var entityProp = entityClass.findOrCreateProperty(v.name, v.complexType, v.access, "get", "set");
                             var entityGetter = entityProp.findOrCreateGetter();
@@ -227,6 +229,7 @@ class EntityBuilder {
                             // at least for now, this is clearer
                             if (hadExistingSetter) {
                                 entitySetter.code.add(macro @:privateAccess {
+                                    $i{entityVarExplicitNullName} = (value == null);
                                     if ($i{entityVarName} == null || value == null) {
                                         $i{entityVarName} = value;
                                     } else if (value.primaryKeyValue() != null && $i{entityVarName}.primaryKeyValue() != value.primaryKeyValue()) {
@@ -238,6 +241,7 @@ class EntityBuilder {
                                 }, null, Start);
                             } else {
                                 entitySetter.code.add(macro @:privateAccess {
+                                    $i{entityVarExplicitNullName} = (value == null);
                                     if ($i{entityVarName} == null || value == null) {
                                         $i{entityVarName} = value;
                                     } else if (value.primaryKeyValue() != null && $i{entityVarName}.primaryKeyValue() != value.primaryKeyValue()) {
@@ -490,8 +494,12 @@ class EntityBuilder {
             }]}
             $b{[for (entityField in entityDefinition.entityFields_OneToOne()) {
                 var foreignKey = entityField.foreignKey();
+                var entityVarExplicitNullName = "_" + entityField.name + "ExplicitNull";
+
                 macro {
-                    if ($i{entityField.name} != null) {
+                    if ($i{entityVarExplicitNullName}) {
+                        record.empty($v{entityField.name});
+                    } else if ($i{entityField.name} != null) {
                         record.field($v{entityField.name}, $i{entityField.name}.$foreignKey);
                     }
                 }
@@ -533,6 +541,7 @@ class EntityBuilder {
                     // one to one
                     $b{[for (entityField in entityDefinition.entityFields_OneToOne()) {
                         var classDef = entityField.toClassDefExpr(entityDefinition);
+                        var entityVarName = "_" + entityField.name;
                         macro {
                             if (fieldSet.allow($v{entityField.name})) {
                                 var id = record.field($v{entityField.name});
@@ -540,7 +549,7 @@ class EntityBuilder {
                                     promiseList.push(() -> {
                                         return new promises.Promise((resolve, reject) -> {
                                             $p{classDef}.findInternal($p{classDef}.primaryKeyQuery(id), queryCacheId, fieldSet).then(entities -> {
-                                                $i{entityField.name} = entities[0];
+                                                $i{entityVarName} = entities[0];
                                                 resolve(true);
                                             }, error -> {
                                                 reject(error);
@@ -1195,7 +1204,7 @@ class EntityBuilder {
             }]}
 
             $b{[for (entityField in entityDefinition.entityFields_OneToOne()) {
-                var entityVarName = entityField.name;
+                var entityVarName = "_" + entityField.name;
                 macro {
                     $i{entityVarName} = other.$entityVarName;
                 }
