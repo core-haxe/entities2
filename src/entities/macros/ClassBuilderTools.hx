@@ -130,8 +130,8 @@ class ClassBuilderTools {
 
     private static function handleReplacements(e:Expr, replacements:Map<String, String>):Expr {
         return switch(e.expr) {
-            //case EField({ expr: EConst(CIdent(c)) }, f, Normal):    
-            //    e;
+            case EField({ expr: EConst(CIdent(c)) }, f, Normal):    
+                e;
             case EConst(CIdent(s)):
                 if (replacements.exists(s)) {
                     var varName = s;
