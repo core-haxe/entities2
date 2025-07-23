@@ -190,6 +190,7 @@ class EntityManager {
     private var _queryCache:Map<String, Map<String, RecordSet>> = [];
     private var _nextQueryCacheId:Float = 1;
     private var _queryCacheHitCount:Int = 0;
+    private var _queryCount:Int = 0;
     private function generateQueryCachedId():String {
         var id = _nextQueryCacheId;
         _nextQueryCacheId++;
@@ -199,6 +200,82 @@ class EntityManager {
 
     private function clearQueryCache(cacheId:String) {
         _queryCache.remove(cacheId);
+    }
+
+    private function checkCache(tableName:String, query:QueryExpr, cacheId:String):Bool {
+        var queryKey = tableName + "|" + Query.queryExprToSql(query);
+        var cache = _queryCache.get(cacheId);
+        if (cache != null && cache.exists(queryKey)) {
+            return true;
+        }
+        return false;
+    }
+
+    private function buildCollatedCacheResult(tableName:String, query:QueryExpr, cacheId:String):RecordSet {
+        if (!_queryCache.exists(cacheId)) {
+            return null;
+        }
+        var cache = _queryCache.get(cacheId);
+
+        var collatedResult:RecordSet = null;
+
+        if (query != null) {
+            switch (query) {
+                case QueryBinop(QOpIn, QueryValue(v1), QueryValue(v2)):
+                    var field:String = cast v1;
+                    var originalField = field;
+                    field = field.replace("%", "");
+                    field = field.replace("^", "");
+                    var list:Array<Any> = cast v2;
+                    for (l in list) {
+                        var subQuery = Query.query(originalField = l);
+                        var subCacheKey = tableName + "|" + Query.queryExprToSql(subQuery);
+                        if (cache.exists(subCacheKey)) {
+                            var subResult = cache.get(subCacheKey);
+                            if (collatedResult == null) {
+                                collatedResult = new RecordSet();
+                            }
+                            for (item in subResult) {
+                                collatedResult.push(item);
+                            }
+                        } else {
+                            collatedResult = null;
+                            break;
+                        }
+                    }
+                case _:      
+            }
+        }
+        return collatedResult;
+    }
+
+    private function cacheRelatedResults(tableName:String, query:QueryExpr, records:RecordSet, cacheId:String) {
+        if (!_queryCache.exists(cacheId)) {
+            return;
+        }
+        var cache = _queryCache.get(cacheId);
+        if (query != null) {
+            switch (query) {
+                case QueryBinop(QOpIn, QueryValue(v1), QueryValue(v2)):
+                    var field:String = cast v1;
+                    var originalField = field;
+                    field = field.replace("%", "");
+                    field = field.replace("^", "");
+                    var list:Array<Any> = cast v2;
+                    for (l in list) {
+                        var records = records.findRecords(field, l);
+                        if (records == null) {
+                            records = [];
+                        }
+                        var subResult = new RecordSet(records);
+
+                        var subQuery = Query.query(originalField = l);
+                        var subCacheKey = tableName + "|" + Query.queryExprToSql(subQuery);
+                        cache.set(subCacheKey, subResult);
+                    }
+                case _:    
+            }
+        }
     }
 
     private function find(tableName:String, query:QueryExpr, cacheId:String = null):Promise<RecordSet> {
@@ -213,36 +290,26 @@ class EntityManager {
                     _queryCacheHitCount++;
                     resolve(cache.get(queryKey));
                 } else {
-                    lookupTable(tableName).then(table -> {
-                        return table.find(query);
-                    }).then(result -> {
-                        if (cache == null) {
-                            cache = [];
-                            _queryCache.set(cacheId, cache);
-                        }
-
-                        cache.set(queryKey, result.data);
-                        if (query != null) {
-                        switch (query) {
-                                case QueryBinop(QOpIn, QueryValue(v1), QueryValue(v2)):
-                                    var field:String = cast v1;
-                                    field = field.replace("%", "");
-                                    var list:Array<Any> = cast v2;
-                                    for (l in list) {
-                                        var subQuery = Query.query(field = l);
-                                        var record = result.data.findRecord(field, l);
-                                        var subCacheKey = tableName + "|" + Query.queryExprToSql(subQuery);
-                                        var subResult = new RecordSet([record]);
-                                        cache.set(subCacheKey, subResult);
-                                    }
-                                case _:    
+                    var collatedResult = buildCollatedCacheResult(tableName, query, cacheId);
+                    if (collatedResult != null) {
+                        resolve(collatedResult);
+                    } else {
+                        lookupTable(tableName).then(table -> {
+                            _queryCount++;
+                            return table.find(query);
+                        }).then(result -> {
+                            if (cache == null) {
+                                cache = [];
+                                _queryCache.set(cacheId, cache);
                             }
-                        }
 
-                        resolve(result.data);
-                    }, error -> {
-                        reject(error);
-                    });
+                            cache.set(queryKey, result.data);
+                            cacheRelatedResults(tableName, query, result.data, cacheId);
+                            resolve(result.data);
+                        }, error -> {
+                            reject(error);
+                        });
+                    }
                 }
             } else {
                 lookupTable(tableName).then(table -> {
@@ -263,41 +330,31 @@ class EntityManager {
             #end
             if (cacheId != null) {
                 var cache = _queryCache.get(cacheId);
-                var queryKey = tableName + "|" + Query.queryExprToSql(query) + "|" + pageSize;
+                var queryKey = tableName + "|" + Query.queryExprToSql(query) + "|" + pageIndex + "|" + pageSize;
                 if (cache != null && cache.exists(queryKey)) {
                     _queryCacheHitCount++;
                     resolve(cache.get(queryKey));
                 } else {
-                    lookupTable(tableName).then(table -> {
-                        return table.page(pageIndex, pageSize, query);
-                    }).then(result -> {
-                        if (cache == null) {
-                            cache = [];
-                            _queryCache.set(cacheId, cache);
-                        }
-
-                        cache.set(queryKey, result.data);
-                        if (query != null) {
-                        switch (query) {
-                                case QueryBinop(QOpIn, QueryValue(v1), QueryValue(v2)):
-                                    var field:String = cast v1;
-                                    field = field.replace("%", "");
-                                    var list:Array<Any> = cast v2;
-                                    for (l in list) {
-                                        var subQuery = Query.query(field = l);
-                                        var record = result.data.findRecord(field, l);
-                                        var subCacheKey = tableName + "|" + Query.queryExprToSql(subQuery) + "|" + pageSize;
-                                        var subResult = new RecordSet([record]);
-                                        cache.set(subCacheKey, subResult);
-                                    }
-                                case _:    
+                    var collatedResult = buildCollatedCacheResult(tableName, query, cacheId);
+                    if (collatedResult != null) {
+                        resolve(collatedResult);
+                    } else {
+                        lookupTable(tableName).then(table -> {
+                            _queryCount++;
+                            return table.page(pageIndex, pageSize, query);
+                        }).then(result -> {
+                            if (cache == null) {
+                                cache = [];
+                                _queryCache.set(cacheId, cache);
                             }
-                        }
 
-                        resolve(result.data);
-                    }, error -> {
-                        reject(error);
-                    });
+                            cache.set(queryKey, result.data);
+                            cacheRelatedResults(tableName, query, result.data, cacheId);
+                            resolve(result.data);
+                        }, error -> {
+                            reject(error);
+                        });
+                    }
                 }
             } else {
                 lookupTable(tableName).then(table -> {

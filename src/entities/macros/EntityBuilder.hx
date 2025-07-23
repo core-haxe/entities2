@@ -511,6 +511,90 @@ class EntityBuilder {
     static function buildFromRecord(entityClass:ClassBuilder, entityDefinition:EntityDefinition) {
         var entityComplexType = entityClass.toComplexType();
         var primaryKeyName = entityDefinition.primaryKeyFieldName;
+        var tableName = entityDefinition.tableName;
+
+        var preCacheQueriesFn = entityClass.addStaticFunction("preCacheQueries", [
+            {name: "query", type: macro: Query.QueryExpr},
+            {name: "queryCacheId", type: macro: String},
+        ], macro: promises.Promise<Bool>, [APrivate]);
+        preCacheQueriesFn.metadata.add(":noCompletion");
+        preCacheQueriesFn.code += macro @:privateAccess {
+            return new promises.Promise((resolve, reject) -> {
+                entities.EntityManager.instance.find($v{tableName}, query, queryCacheId).then(records -> {
+                    var promiseList:Array<() -> promises.Promise<Any>> = [];
+                    $b{[for (entityField in entityDefinition.entityFields_OneToOne()) {
+                        var classDef = entityField.toClassDefExpr(entityDefinition);
+
+                        macro {
+                            var ids:Array<Int> = [];
+                            for (record in records) {
+                                ids.push(record.field($v{entityField.name}));
+                            }
+                            var q = $p{classDef}.primaryKeysQuery(ids);
+                            if (ids.length > 0) {
+                                promiseList.push($p{classDef}.preCacheQueries.bind(q, queryCacheId));
+                            }
+                        }
+                    }]}
+
+                    var ids:Array<Int> = [];
+                    for (record in records) {
+                        if (!ids.contains(record.field($v{primaryKeyName}))) {
+                            ids.push(record.field($v{primaryKeyName}));
+                        }
+                    }
+                    var q = primaryKeysQuery(ids);
+
+                    $b{[for (entityField in entityDefinition.entityFields_OneToMany()) {
+                        var joinTableName = entityField.joinTableName();
+                        var joinForeignKey = entityField.joinForeignKey();
+                        var classDef = entityField.toClassDefExpr(entityDefinition);
+
+                        macro {
+                            if (ids.length > 0) {
+                                promiseList.push($p{classDef}.preCacheLinkQueries.bind(q, queryCacheId, $v{joinTableName}, $v{joinForeignKey}));
+                            }
+                        }
+                    }]}
+
+                    return promises.PromiseUtils.runSequentially(promiseList);
+                }).then(_ -> {
+
+                    resolve(true);
+                }, error -> {
+                    reject(error);
+                });
+            });
+        }
+
+        var preCacheLinkQueriesFn = entityClass.addStaticFunction("preCacheLinkQueries", [
+            {name: "query", type: macro: Query.QueryExpr},
+            {name: "queryCacheId", type: macro: String},
+            {name: "joinTableName", type: macro: String},
+            {name: "joinForeignKey", type: macro: String},
+        ], macro: promises.Promise<Bool>, [APrivate]);
+        preCacheLinkQueriesFn.metadata.add(":noCompletion");
+        preCacheLinkQueriesFn.code += macro @:privateAccess {
+            return new promises.Promise((resolve, reject) -> {
+                entities.EntityManager.instance.find(joinTableName, query, queryCacheId).then(records -> {
+                    var ids:Array<Int> = [];
+                    for (record in records) {
+                        if (!ids.contains(record.field(joinForeignKey))) {
+                            ids.push(record.field(joinForeignKey));
+                        }
+                    }
+                    var q = primaryKeysQuery(ids);
+                    if (ids.length == 0) {
+                        return null;
+                    }
+                    return preCacheQueries(q, queryCacheId);
+                }).then(_ -> {
+                    resolve(true);
+                }, error -> {
+                    reject(error);
+                });
+            });
+        }
 
         var fromRecordFn = entityClass.addFunction("fromRecord", [
             {name: "record", type: macro: db.Record},
@@ -636,12 +720,13 @@ class EntityBuilder {
             return;
         }
 
-        addFn.code += macro @:privateAccess {
-            if (fieldSet == null) fieldSet = new entities.EntityFieldSet();
-            if ($i{primaryKeyName} != null) {
-                return update(fieldSet);
-            } else {
-                return new promises.Promise((resolve, reject) -> {
+        var addInternalFn = entityClass.addFunction("addInternal", [
+            {name: "fieldSet", type: macro: entities.EntityFieldSet},
+            {name: "queryCacheId", type: macro: String}
+        ], macro: promises.Promise<$entityComplexType>, [APrivate]);
+        addInternalFn.metadata.add(":noCompletion");
+        addInternalFn.code += macro @:privateAccess {
+            return new promises.Promise((resolve, reject) -> {
                     init().then(_ -> {
                         var promiseList:Array<() -> promises.Promise<Any>> = [];
                         // one to one
@@ -696,6 +781,31 @@ class EntityBuilder {
                     }).then(result -> {
                         resolve(this);
                     }, error -> {
+                        reject(error);
+                    });
+            });
+        }
+
+        addFn.code += macro @:privateAccess {
+            var queryCacheId = entities.EntityManager.instance.generateQueryCachedId();
+            if (fieldSet == null) fieldSet = new entities.EntityFieldSet();
+            if ($i{primaryKeyName} != null) {
+                return new promises.Promise((resolve, reject) -> {
+                    updateInternal(fieldSet, queryCacheId).then(entity -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
+                        resolve(entity);
+                    }, error -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
+                        reject(error);
+                    });
+                });            
+            } else {
+                return new promises.Promise((resolve, reject) -> {
+                    addInternal(fieldSet, queryCacheId).then(entity -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
+                        resolve(entity);
+                    }, error -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
                         reject(error);
                     });
                 });            
@@ -960,126 +1070,152 @@ class EntityBuilder {
             return;
         }
 
+        var updateInternalFn = entityClass.addFunction("updateInternal", [
+            {name: "fieldSet", type: macro: entities.EntityFieldSet},
+            {name: "queryCacheId", type: macro: String}
+        ], macro: promises.Promise<$entityComplexType>, [APrivate]);
+        updateInternalFn.metadata.add(":noCompletion");
+        updateInternalFn.code += macro @:privateAccess {
+            return new promises.Promise((resolve, reject) -> {
+                var entityInDB:$entityComplexType = null;
+                init().then(_ -> {
+                    return findByIdInternal(this.$primaryKeyName, fieldSet, queryCacheId);
+                }).then(result -> {
+                    entityInDB = result;
+                    var promiseList:Array<() -> promises.Promise<Any>> = [];
+                    // one to one
+                    $b{[for (entityField in entityDefinition.entityFields_OneToOne()) {
+                        var foreignKey = entityField.foreignKey();
+                        var mustExist:Bool = entityField.mustExist();
+                        /* MAY NEED THIS STILL
+                        var prevRefVarName = "_" + entityField.name + "PrevRef";
+                        var cascadeDeletions = entityField.cascadeDeletions();
+                        */
+                        macro {
+                            ${if (mustExist) {
+                                macro {
+                                    if ($i{entityField.name} != null && $i{entityField.name}.$foreignKey == null) {
+                                        reject("property '" + $v{entityField.name} + "' in entity '" + $v{entityClass.name} + "' must already exist in the database, no primary key found on object (" + $v{foreignKey} + ")");
+                                        return null;
+                                    }
+                                }
+                            } else {
+                                macro null;
+                            }}
+
+                            /* MAY NEED THIS STILL
+                            ${if (cascadeDeletions) {
+                                macro {
+                                    if ($i{prevRefVarName} != null && $i{prevRefVarName}.$foreignKey != $i{entityField.name}.$foreignKey) {
+                                        promiseList.push($i{prevRefVarName}.delete.bind());
+                                        $i{prevRefVarName} = null;
+                                    }
+                                };
+                            } else {
+                                macro null;
+                            }}
+                            */    
+
+                            if ($i{entityField.name} != null) {
+                                if ($i{entityField.name}.$foreignKey == null) {
+                                    promiseList.push($i{entityField.name}.addInternal.bind(fieldSet, queryCacheId));
+                                } else {
+                                    promiseList.push($i{entityField.name}.updateInternal.bind(fieldSet, queryCacheId));
+                                }
+                            }
+                        }
+                    }]}
+                    // one to many
+                    $b{[for (entityField in entityDefinition.entityFields_OneToMany()) {
+                        var fieldName = entityField.name;
+                        if (entityField.primitive) {
+                            fieldName = entityField.primitiveEntityFieldName();
+                        }
+                        var foreignKey = entityField.foreignKey();
+                        var mustExist:Bool = entityField.mustExist();
+                        macro {
+                            ${if (mustExist) {
+                                macro {
+                                    if ($i{fieldName} != null) {
+                                        for (item in $i{fieldName}) {
+                                            if (item.$foreignKey == null) {
+                                                reject("property items in '" + $v{entityField.name} + "' in entity '" + $v{entityClass.name} + "' must already exist in the database, no primary key found on object (" + $v{foreignKey} + ")");
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                macro null;
+                            }}
+
+                            ${if (entityField.primitive) {
+                                var primitiveEntityClassComplexType = entityField.primitiveEntityTypePath();
+                                macro {
+                                    if ($i{entityField.name} != null) {
+                                        if ($i{fieldName} == null) {
+                                            $i{fieldName} = [];
+                                        }
+                                        while ($i{fieldName}.length > $i{entityField.name}.length) {
+                                            $i{fieldName}.pop();
+                                        }
+                                        while ($i{fieldName}.length != $i{entityField.name}.length) {
+                                            $i{fieldName}.push(new $primitiveEntityClassComplexType());
+                                        }
+                                        //var diff1 
+                                        for (i in 0...$i{entityField.name}.length) {
+                                            $i{fieldName}[i].value = $i{entityField.name}[i];
+                                        }
+                                    }
+                                };
+                            } else {
+                                macro null;
+                            }}
+
+                            if ($i{fieldName} != null) {
+                                for (item in $i{fieldName}) {
+                                    if (item.$foreignKey == null) {
+                                        promiseList.push(item.addInternal.bind(fieldSet, queryCacheId));
+                                    } else {
+                                        promiseList.push(item.updateInternal.bind(fieldSet, queryCacheId));
+                                    }
+                                }
+                            }
+                        }
+                    }]}
+                    return promises.PromiseUtils.runSequentially(promiseList);
+                }).then(result -> {
+                    return updateData(entityInDB, fieldSet);
+                }).then(result -> {
+                    resolve(this);
+                }, error -> {
+                    reject(error);
+                });
+            });            
+        }
+
         updateFn.code += macro @:privateAccess {
+            var queryCacheId = entities.EntityManager.instance.generateQueryCachedId();
             if (fieldSet == null) fieldSet = new entities.EntityFieldSet();
             if ($i{primaryKeyName} == null) {
-                return add(fieldSet);
-            } else {
                 return new promises.Promise((resolve, reject) -> {
-                    var entityInDB:$entityComplexType = null;
-                    init().then(_ -> {
-                        return findById(this.$primaryKeyName);
-                    }).then(result -> {
-                        entityInDB = result;
-                        var promiseList:Array<() -> promises.Promise<Any>> = [];
-                        // one to one
-                        $b{[for (entityField in entityDefinition.entityFields_OneToOne()) {
-                            var foreignKey = entityField.foreignKey();
-                            var mustExist:Bool = entityField.mustExist();
-                            /* MAY NEED THIS STILL
-                            var prevRefVarName = "_" + entityField.name + "PrevRef";
-                            var cascadeDeletions = entityField.cascadeDeletions();
-                            */
-                            macro {
-                                ${if (mustExist) {
-                                    macro {
-                                        if ($i{entityField.name} != null && $i{entityField.name}.$foreignKey == null) {
-                                            reject("property '" + $v{entityField.name} + "' in entity '" + $v{entityClass.name} + "' must already exist in the database, no primary key found on object (" + $v{foreignKey} + ")");
-                                            return null;
-                                        }
-                                    }
-                                } else {
-                                    macro null;
-                                }}
-
-                                /* MAY NEED THIS STILL
-                                ${if (cascadeDeletions) {
-                                    macro {
-                                        if ($i{prevRefVarName} != null && $i{prevRefVarName}.$foreignKey != $i{entityField.name}.$foreignKey) {
-                                            promiseList.push($i{prevRefVarName}.delete.bind());
-                                            $i{prevRefVarName} = null;
-                                        }
-                                    };
-                                } else {
-                                    macro null;
-                                }}
-                                */    
-
-                                if ($i{entityField.name} != null) {
-                                    if ($i{entityField.name}.$foreignKey == null) {
-                                        promiseList.push($i{entityField.name}.add.bind(fieldSet));
-                                    } else {
-                                        promiseList.push($i{entityField.name}.update.bind(fieldSet));
-                                    }
-                                }
-                            }
-                        }]}
-                        // one to many
-                        $b{[for (entityField in entityDefinition.entityFields_OneToMany()) {
-                            var fieldName = entityField.name;
-                            if (entityField.primitive) {
-                                fieldName = entityField.primitiveEntityFieldName();
-                            }
-                            var foreignKey = entityField.foreignKey();
-                            var mustExist:Bool = entityField.mustExist();
-                            macro {
-                                ${if (mustExist) {
-                                    macro {
-                                        if ($i{fieldName} != null) {
-                                            for (item in $i{fieldName}) {
-                                                if (item.$foreignKey == null) {
-                                                    reject("property items in '" + $v{entityField.name} + "' in entity '" + $v{entityClass.name} + "' must already exist in the database, no primary key found on object (" + $v{foreignKey} + ")");
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    macro null;
-                                }}
-
-                                ${if (entityField.primitive) {
-                                    var primitiveEntityClassComplexType = entityField.primitiveEntityTypePath();
-                                    macro {
-                                        if ($i{entityField.name} != null) {
-                                            if ($i{fieldName} == null) {
-                                                $i{fieldName} = [];
-                                            }
-                                            while ($i{fieldName}.length > $i{entityField.name}.length) {
-                                                $i{fieldName}.pop();
-                                            }
-                                            while ($i{fieldName}.length != $i{entityField.name}.length) {
-                                                $i{fieldName}.push(new $primitiveEntityClassComplexType());
-                                            }
-                                            //var diff1 
-                                            for (i in 0...$i{entityField.name}.length) {
-                                                $i{fieldName}[i].value = $i{entityField.name}[i];
-                                            }
-                                        }
-                                    };
-                                } else {
-                                    macro null;
-                                }}
-
-                                if ($i{fieldName} != null) {
-                                    for (item in $i{fieldName}) {
-                                        if (item.$foreignKey == null) {
-                                            promiseList.push(item.add.bind(fieldSet));
-                                        } else {
-                                            promiseList.push(item.update.bind(fieldSet));
-                                        }
-                                    }
-                                }
-                            }
-                        }]}
-                        return promises.PromiseUtils.runSequentially(promiseList);
-                    }).then(result -> {
-                        return updateData(entityInDB, fieldSet);
-                    }).then(result -> {
-                        resolve(this);
+                    addInternal(fieldSet, queryCacheId).then(entity -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
+                        resolve(entity);
                     }, error -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
                         reject(error);
                     });
-                });            
+                });
+            } else {
+                return new promises.Promise((resolve, reject) -> {
+                    updateInternal(fieldSet, queryCacheId).then(entity -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
+                        resolve(entity);
+                    }, error -> {
+                        entities.EntityManager.instance.clearQueryCache(queryCacheId);
+                        reject(error);
+                    });
+                });
             }
         }
     }
@@ -1137,7 +1273,7 @@ class EntityBuilder {
                         var joinTableName = entityField.joinTableName();
                         var joinForeignKey = entityField.joinForeignKey();
                         macro {
-                            if ($i{fieldName} != null) {
+                            if ($i{fieldName} != null && entityInDB.$fieldName != null) {
                                 var diff = entities.EntityManager.instance.diffIds(
                                     entityInDB.$fieldName.map(item -> item.$foreignKey),
                                     this.$fieldName.map(item -> item.$foreignKey)
@@ -1241,6 +1377,8 @@ class EntityBuilder {
         findInternalFn.code += macro @:privateAccess {
             return new promises.Promise((resolve, reject) -> {
                 init().then(_ -> {
+                    return preCacheQueries(query, queryCacheId);
+                }).then(_ -> {
                     if (pageSize != null) {
                         var finalPageIndex = 0;
                         if (pageIndex != null) {
@@ -1308,15 +1446,31 @@ class EntityBuilder {
             return;
         }
 
-        findByIdFn.code += macro @:privateAccess {
-            var queryCacheId = entities.EntityManager.instance.generateQueryCachedId();
-            if (fieldSet == null) fieldSet = new entities.EntityFieldSet();
+        var findByIdInternal = entityClass.addStaticFunction("findByIdInternal", [
+            {name: "id", type: macro: Null<Int>},
+            {name: "fieldSet", type: macro: entities.EntityFieldSet},
+            {name: "queryCacheId", type: macro: String}
+        ], macro: promises.Promise<$entityComplexType>, [APrivate]);
+        findByIdInternal.metadata.add(":noCompletion");
+        findByIdInternal.code += macro @:privateAccess {
             return new promises.Promise((resolve, reject) -> {
                 init().then(_ -> {
                     return findInternal(primaryKeyQuery(id), queryCacheId, fieldSet, 1);
                 }).then(entitiesList -> {
-                    entities.EntityManager.instance.clearQueryCache(queryCacheId);
                     resolve(entitiesList[0]);
+                }, error -> {
+                    reject(error);
+                });
+            });
+        }
+
+        findByIdFn.code += macro @:privateAccess {
+            var queryCacheId = entities.EntityManager.instance.generateQueryCachedId();
+            if (fieldSet == null) fieldSet = new entities.EntityFieldSet();
+            return new promises.Promise((resolve, reject) -> {
+                findByIdInternal(id, fieldSet, queryCacheId).then(entity -> {
+                    entities.EntityManager.instance.clearQueryCache(queryCacheId);
+                    resolve(entity);
                 }, error -> {
                     entities.EntityManager.instance.clearQueryCache(queryCacheId);
                     reject(error);

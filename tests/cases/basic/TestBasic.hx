@@ -693,7 +693,7 @@ class TestBasic extends TestBase {
             Assert.equals("entity2", mainEntity.entitiesArray3[1].stringValue);
             Assert.equals("entity1", mainEntity.entitiesArray4[0].stringValue);
             Assert.equals("entity2", mainEntity.entitiesArray4[1].stringValue);
-            Assert.equals(145, @:privateAccess EntityManager.instance._queryCacheHitCount); // is 145 too specific?
+            Assert.equals(507, @:privateAccess EntityManager.instance._queryCacheHitCount); // is 507 too specific?
             profileEnd();
             async.done();
         }, error -> {
