@@ -516,6 +516,7 @@ class EntityBuilder {
         var preCacheQueriesFn = entityClass.addStaticFunction("preCacheQueries", [
             {name: "query", type: macro: Query.QueryExpr},
             {name: "queryCacheId", type: macro: String},
+            {name: "fieldSet", type: macro: entities.EntityFieldSet}
         ], macro: promises.Promise<Bool>, [APrivate]);
         preCacheQueriesFn.metadata.add(":noCompletion");
         preCacheQueriesFn.code += macro @:privateAccess {
@@ -526,13 +527,15 @@ class EntityBuilder {
                         var classDef = entityField.toClassDefExpr(entityDefinition);
 
                         macro {
-                            var ids:Array<Int> = [];
-                            for (record in records) {
-                                ids.push(record.field($v{entityField.name}));
-                            }
-                            var q = $p{classDef}.primaryKeysQuery(ids);
-                            if (ids.length > 0) {
-                                promiseList.push($p{classDef}.preCacheQueries.bind(q, queryCacheId));
+                            if (fieldSet.allow($v{entityField.name})) {
+                                var ids:Array<Int> = [];
+                                for (record in records) {
+                                    ids.push(record.field($v{entityField.name}));
+                                }
+                                var q = $p{classDef}.primaryKeysQuery(ids);
+                                if (ids.length > 0) {
+                                    promiseList.push($p{classDef}.preCacheQueries.bind(q, queryCacheId, fieldSet));
+                                }
                             }
                         }
                     }]}
@@ -551,8 +554,10 @@ class EntityBuilder {
                         var classDef = entityField.toClassDefExpr(entityDefinition);
 
                         macro {
-                            if (ids.length > 0) {
-                                promiseList.push($p{classDef}.preCacheLinkQueries.bind(q, queryCacheId, $v{joinTableName}, $v{joinForeignKey}));
+                            if (fieldSet.allow($v{entityField.name})) {
+                                if (ids.length > 0) {
+                                    promiseList.push($p{classDef}.preCacheLinkQueries.bind(q, queryCacheId, $v{joinTableName}, $v{joinForeignKey}, fieldSet));
+                                }
                             }
                         }
                     }]}
@@ -572,7 +577,8 @@ class EntityBuilder {
             {name: "queryCacheId", type: macro: String},
             {name: "joinTableName", type: macro: String},
             {name: "joinForeignKey", type: macro: String},
-        ], macro: promises.Promise<Bool>, [APrivate]);
+            {name: "fieldSet", type: macro: entities.EntityFieldSet}
+       ], macro: promises.Promise<Bool>, [APrivate]);
         preCacheLinkQueriesFn.metadata.add(":noCompletion");
         preCacheLinkQueriesFn.code += macro @:privateAccess {
             return new promises.Promise((resolve, reject) -> {
@@ -587,7 +593,7 @@ class EntityBuilder {
                     if (ids.length == 0) {
                         return null;
                     }
-                    return preCacheQueries(q, queryCacheId);
+                    return preCacheQueries(q, queryCacheId, fieldSet);
                 }).then(_ -> {
                     resolve(true);
                 }, error -> {
@@ -1377,7 +1383,7 @@ class EntityBuilder {
         findInternalFn.code += macro @:privateAccess {
             return new promises.Promise((resolve, reject) -> {
                 init().then(_ -> {
-                    return preCacheQueries(query, queryCacheId);
+                    return preCacheQueries(query, queryCacheId, fieldSet);
                 }).then(_ -> {
                     if (pageSize != null) {
                         var finalPageIndex = 0;
