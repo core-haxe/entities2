@@ -113,7 +113,7 @@ class EntityManager {
             } else {
                 database.disconnect().then(_ -> {
                     _tableCache = [];
-                    //_queryCache = [];
+                    _queryCache = [];
                     _connected = false;
                     resolve(true);
                 }, error -> {
@@ -129,7 +129,9 @@ class EntityManager {
             if (_tableCache.exists(tableName)) {
                 resolve(_tableCache.get(tableName));
             } else {
-                database.table(tableName).then(result -> {
+                connect().then(_ -> {
+                    return database.table(tableName);
+                }).then(result -> {
                     _tableCache.set(tableName, result.table);
                     resolve(result.table);
                 }, error -> {
