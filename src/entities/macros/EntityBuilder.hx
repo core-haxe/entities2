@@ -1241,7 +1241,7 @@ class EntityBuilder {
             return new promises.Promise((resolve, reject) -> {
                 var record = toRecord(fieldSet);
                 init().then(_ -> {
-                    entities.EntityManager.instance.updateRecord($v{entityTableName}, primaryKeyQuery($i{primaryKeyName}), record);
+                    return entities.EntityManager.instance.updateRecord($v{entityTableName}, primaryKeyQuery($i{primaryKeyName}), record);
                 }).then(result -> {
                     return updateJoinData(entityInDB, fieldSet);
                 }).then(result -> {
